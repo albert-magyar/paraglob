@@ -5,6 +5,12 @@
 
 #include "paraglob.h"
 
+typedef struct entry {
+  char *pattern;
+  regex_t dfa;
+  void *value;
+} entry_t;
+
 typedef struct regex_trie_node {
   char key;
   regex_t *patterns;
@@ -16,7 +22,11 @@ typedef struct regex_trie_node {
 struct __paraglob {
   regex_trie_node_t *prefix_root;
   regex_trie_node_t *suffix_root;
+  paraglob_match_callback *callback;
+  char *test_message;
 };
+
+enum __rt_mode { RT_PREFIX, RT_SUFFIX };
 
 regex_trie_node_t *_find_child(regex_trie_node_t *parent, char key) {
   regex_trie_node_t *current = parent->children;
@@ -69,6 +79,9 @@ paraglob_t paraglob_create(enum paraglob_encoding encoding, paraglob_match_callb
   paraglob_t pg = malloc(sizeof(struct __paraglob));
   pg->prefix_root = calloc(1, sizeof(regex_trie_node_t));
   pg->suffix_root = calloc(1, sizeof(regex_trie_node_t));
+  pg->callback = callback;
+  pg->test_message = malloc(5);
+  strcpy(pg->test_message, "test");
   return pg;
 }
 
@@ -97,6 +110,8 @@ int _suffix_insert(regex_trie_node_t *root, char *suffix, const char *pattern, v
   }
   current->n_patterns++;
   current->patterns = (regex_t *) realloc(current->patterns, current->n_patterns * sizeof(regex_t));
+  current->values = (void **) realloc(current->values, current->n_patterns * sizeof(void *));
+  current->values[current->n_patterns-1] = cookie;
   return regcomp(current->patterns + current->n_patterns - 1, pattern, 0);
 }
 
@@ -136,37 +151,19 @@ int paraglob_compile(paraglob_t pg) {
   return 1;
 }
 
-uint64_t _prefix_matches(regex_trie_node_t *root, uint64_t len, const char *needle) {
-  regex_trie_node_t *current = root;
+uint64_t _rt_matches(paraglob_t pg, uint64_t len, const char *needle, enum __rt_mode mode) {
+  regex_trie_node_t *current = (mode == RT_PREFIX) ? pg->prefix_root : pg->suffix_root;
   int i = 0, j = 0;
   int matches = 0;
-  while (needle[i]) {
-    current = _find_child(current, needle[i]);
-    if (current) {
-      for (j = 0; j < current->n_patterns; j++) {
-	if (regexec(current->patterns + j, needle, 0, NULL, 0) == 0) {
-	  matches++;
-	}
-      }
-    } else {
-      break;
-    }
-    i++;
-  }
-  return matches;
-}
-
-uint64_t _suffix_matches(regex_trie_node_t *root, uint64_t len, const char *needle) {
-  regex_trie_node_t *current = root;
-  int i = 0, j = 0;
-  int i_max = strlen(needle);
-  int matches = 0;
-  while (i < i_max) {
-    int idx = (i_max - i) - 1;
+  while (i < len) {
+    int idx = (mode == RT_PREFIX) ? i : (len - i) - 1;
     current = _find_child(current, needle[idx]);
     if (current) {
       for (j = 0; j < current->n_patterns; j++) {
 	if (regexec(current->patterns + j, needle, 0, NULL, 0) == 0) {
+	  if (pg->callback) {
+	    pg->callback(4, pg->test_message, current->values[j]);
+	  }
 	  matches++;
 	}
       }
@@ -179,8 +176,8 @@ uint64_t _suffix_matches(regex_trie_node_t *root, uint64_t len, const char *need
 }
 
 uint64_t paraglob_match(paraglob_t pg, uint64_t len, const char *needle) {
-  int prefix_matches = _prefix_matches(pg->prefix_root, len, needle);
-  int suffix_matches = _suffix_matches(pg->suffix_root, len, needle);
+  int prefix_matches = _rt_matches(pg, len, needle, RT_PREFIX);
+  int suffix_matches = _rt_matches(pg, len, needle, RT_SUFFIX);
   return prefix_matches + suffix_matches;
 }
 
