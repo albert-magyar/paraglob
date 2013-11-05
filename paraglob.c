@@ -13,9 +13,8 @@ typedef struct entry {
 
 typedef struct regex_trie_node {
   char key;
-  regex_t *patterns;
-  void **values;
-  int n_patterns;
+  entry_t *entries;
+  uint64_t n_entries;
   struct regex_trie_node *next, *children;
 } regex_trie_node_t;
 
@@ -85,34 +84,21 @@ paraglob_t paraglob_create(enum paraglob_encoding encoding, paraglob_match_callb
   return pg;
 }
 
-int _prefix_insert(regex_trie_node_t *root, char *prefix, const char *pattern, void *cookie) {
-  regex_trie_node_t *current = root;
+int _insert(paraglob_t pg, entry_t new_entry, char *fragment, const char *bre_pattern, enum __rt_mode mode) {
+  entry_t *entry_ptr;
+  regex_trie_node_t *current = (mode == RT_PREFIX) ? pg->prefix_root : pg->suffix_root;
   int i = 0;
-  while (prefix[i]) {
-    current = _find_or_create_child(current, prefix[i]);
+  int length = strlen(fragment);
+  while (i < length) {
+    int idx = (mode == RT_PREFIX) ? i : (length - i) - 1;
+    current = _find_or_create_child(current, fragment[idx]);
     i++;
   }
-  current->n_patterns++;
-  current->patterns = (regex_t *) realloc(current->patterns, current->n_patterns * sizeof(regex_t));
-  current->values = (void **) realloc(current->values, current->n_patterns * sizeof(void *));
-  current->values[current->n_patterns-1] = cookie;
-  return regcomp(current->patterns + current->n_patterns - 1, pattern, 0);
-}
-
-int _suffix_insert(regex_trie_node_t *root, char *suffix, const char *pattern, void *cookie) {
-  regex_trie_node_t *current = root;
-  int i = 0;
-  int i_max = strlen(suffix);
-  while (i < i_max) {
-    int idx = (i_max - i) - 1;
-    current = _find_or_create_child(current, suffix[idx]);
-    i++;
-  }
-  current->n_patterns++;
-  current->patterns = (regex_t *) realloc(current->patterns, current->n_patterns * sizeof(regex_t));
-  current->values = (void **) realloc(current->values, current->n_patterns * sizeof(void *));
-  current->values[current->n_patterns-1] = cookie;
-  return regcomp(current->patterns + current->n_patterns - 1, pattern, 0);
+  current->n_entries++;
+  current->entries = (entry_t *) realloc(current->entries, current->n_entries * sizeof(entry_t));
+  entry_ptr = current->entries + current->n_entries - 1;
+  *entry_ptr = new_entry;
+  return regcomp(&(entry_ptr->dfa), bre_pattern, 0);
 }
 
 void correct_pattern(char *bre_pattern, const char *pattern) {
@@ -130,17 +116,25 @@ void correct_pattern(char *bre_pattern, const char *pattern) {
 }
 
 int paraglob_insert(paraglob_t pg, uint64_t len, const char *pattern, void *cookie) {
+  enum __rt_mode mode;
+  entry_t new_entry;
   int result;
-  char *prefix, *suffix;
+  char *prefix, *suffix, *fragment;
   uint64_t prefix_len = _get_prefix(pattern, &prefix);
   uint64_t suffix_len = _get_suffix(pattern, &suffix);
   char *bre_pattern = calloc(len * 2, sizeof(char));
   correct_pattern(bre_pattern, pattern);
   if (prefix_len > suffix_len) {
-    result = _prefix_insert(pg->prefix_root, prefix, bre_pattern, cookie);
+    fragment = prefix;
+    mode = RT_PREFIX;
   } else {
-    result = _suffix_insert(pg->suffix_root, suffix, bre_pattern, cookie);
+    fragment = suffix;
+    mode = RT_SUFFIX;
   }
+  new_entry.pattern = malloc(len + 1);
+  memcpy(new_entry.pattern, pattern, len + 1);
+  new_entry.value = cookie;
+  result = _insert(pg, new_entry, fragment, bre_pattern, mode);
   free(prefix);
   free(suffix);
   free(bre_pattern);
@@ -159,10 +153,10 @@ uint64_t _rt_matches(paraglob_t pg, uint64_t len, const char *needle, enum __rt_
     int idx = (mode == RT_PREFIX) ? i : (len - i) - 1;
     current = _find_child(current, needle[idx]);
     if (current) {
-      for (j = 0; j < current->n_patterns; j++) {
-	if (regexec(current->patterns + j, needle, 0, NULL, 0) == 0) {
+      for (j = 0; j < current->n_entries; j++) {
+	if (regexec(&(current->entries[j].dfa), needle, 0, NULL, 0) == 0) {
 	  if (pg->callback) {
-	    pg->callback(4, pg->test_message, current->values[j]);
+	    pg->callback(strlen(current->entries[j].pattern), current->entries[j].pattern, current->entries[j].value);
 	  }
 	  matches++;
 	}
