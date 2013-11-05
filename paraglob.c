@@ -8,6 +8,7 @@
 typedef struct regex_trie_node {
   char key;
   regex_t *patterns;
+  void **values;
   int n_patterns;
   struct regex_trie_node *next, *children;
 } regex_trie_node_t;
@@ -80,6 +81,8 @@ int _prefix_insert(regex_trie_node_t *root, char *prefix, const char *pattern, v
   }
   current->n_patterns++;
   current->patterns = (regex_t *) realloc(current->patterns, current->n_patterns * sizeof(regex_t));
+  current->values = (void **) realloc(current->values, current->n_patterns * sizeof(void *));
+  current->values[current->n_patterns-1] = cookie;
   return regcomp(current->patterns + current->n_patterns - 1, pattern, 0);
 }
 
@@ -116,7 +119,7 @@ int paraglob_insert(paraglob_t pg, uint64_t len, const char *pattern, void *cook
   char *prefix, *suffix;
   uint64_t prefix_len = _get_prefix(pattern, &prefix);
   uint64_t suffix_len = _get_suffix(pattern, &suffix);
-  char *bre_pattern = malloc(len * 2);
+  char *bre_pattern = calloc(len * 2, sizeof(char));
   correct_pattern(bre_pattern, pattern);
   if (prefix_len > suffix_len) {
     result = _prefix_insert(pg->prefix_root, prefix, bre_pattern, cookie);
@@ -133,46 +136,52 @@ int paraglob_compile(paraglob_t pg) {
   return 1;
 }
 
-uint64_t _prefix_match(regex_trie_node_t *root, uint64_t len, const char *needle) {
+uint64_t _prefix_matches(regex_trie_node_t *root, uint64_t len, const char *needle) {
   regex_trie_node_t *current = root;
   int i = 0, j = 0;
+  int matches = 0;
   while (needle[i]) {
     current = _find_child(current, needle[i]);
     if (current) {
       for (j = 0; j < current->n_patterns; j++) {
-	if (regexec(current->patterns + j, needle, 0, NULL, 0) == 0) return 1;
+	if (regexec(current->patterns + j, needle, 0, NULL, 0) == 0) {
+	  matches++;
+	}
       }
     } else {
-      return 0;
+      break;
     }
     i++;
   }
-  return 0;
+  return matches;
 }
 
-uint64_t _suffix_match(regex_trie_node_t *root, uint64_t len, const char *needle) {
+uint64_t _suffix_matches(regex_trie_node_t *root, uint64_t len, const char *needle) {
   regex_trie_node_t *current = root;
   int i = 0, j = 0;
   int i_max = strlen(needle);
+  int matches = 0;
   while (i < i_max) {
     int idx = (i_max - i) - 1;
     current = _find_child(current, needle[idx]);
     if (current) {
       for (j = 0; j < current->n_patterns; j++) {
-	if (regexec(current->patterns + j, needle, 0, NULL, 0) == 0) return 1;
+	if (regexec(current->patterns + j, needle, 0, NULL, 0) == 0) {
+	  matches++;
+	}
       }
     } else {
-      return 0;
+      break;
     }
     i++;
   }
-  return 0;
+  return matches;
 }
 
 uint64_t paraglob_match(paraglob_t pg, uint64_t len, const char *needle) {
-  int prefix_match = _prefix_match(pg->prefix_root, len, needle);
-  int suffix_match = _suffix_match(pg->suffix_root, len, needle);
-  return prefix_match || suffix_match;
+  int prefix_matches = _prefix_matches(pg->prefix_root, len, needle);
+  int suffix_matches = _suffix_matches(pg->suffix_root, len, needle);
+  return prefix_matches + suffix_matches;
 }
 
 void paraglob_delete(paraglob_t pg) {
