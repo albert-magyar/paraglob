@@ -126,11 +126,11 @@ int paraglob_insert(paraglob_t pg, uint64_t len, const char *pattern, void *cook
   free(prefix);
   free(suffix);
   free(bre_pattern);
-  return result;
+  return (result == 0) ? 1 : 0;
 }
 
 int paraglob_compile(paraglob_t pg) {
-  return 0;
+  return 1;
 }
 
 uint64_t _prefix_match(regex_trie_node_t *root, uint64_t len, const char *needle) {
@@ -192,6 +192,6 @@ void paraglob_stats(paraglob_t pg, uint64_t *fnmatches) {
 }
 
 const char *paraglob_strerror(paraglob_t pg) {
-  return NULL;
+  return "no error";
 }
 
