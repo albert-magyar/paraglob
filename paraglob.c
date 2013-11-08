@@ -22,7 +22,6 @@ struct __paraglob {
   regex_trie_node_t *prefix_root;
   regex_trie_node_t *suffix_root;
   paraglob_match_callback *callback;
-  char *test_message;
 };
 
 enum __rt_mode { RT_PREFIX, RT_SUFFIX };
@@ -79,8 +78,6 @@ paraglob_t paraglob_create(enum paraglob_encoding encoding, paraglob_match_callb
   pg->prefix_root = calloc(1, sizeof(regex_trie_node_t));
   pg->suffix_root = calloc(1, sizeof(regex_trie_node_t));
   pg->callback = callback;
-  pg->test_message = malloc(5);
-  strcpy(pg->test_message, "test");
   return pg;
 }
 
@@ -175,8 +172,22 @@ uint64_t paraglob_match(paraglob_t pg, uint64_t len, const char *needle) {
   return prefix_matches + suffix_matches;
 }
 
-void paraglob_delete(paraglob_t pg) {
+void _rt_delete(regex_trie_node_t *rt) {
+  int i;
+  if (rt->children) _rt_delete(rt->children);
+  if (rt->next) _rt_delete(rt->next);
+  for (i = 0; i < rt->n_entries; i++) {
+    free(rt->entries[i].pattern);
+    regfree(&(rt->entries[i].dfa));
+  }
+  if (rt->n_entries) free(rt->entries);
+  free(rt);
+}
 
+void paraglob_delete(paraglob_t pg) {
+  _rt_delete(pg->prefix_root);
+  _rt_delete(pg->suffix_root);
+  free(pg);
 }
 
 void paraglob_enable_debug(paraglob_t pg, FILE *debug) {
