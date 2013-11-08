@@ -9,7 +9,6 @@
 
 #define PARAGLOB_VERSION "0.01"
 
-struct __paraglob_t;
 typedef struct __paraglob* paraglob_t;
 
 enum paraglob_encoding { PARAGLOB_ASCII };
